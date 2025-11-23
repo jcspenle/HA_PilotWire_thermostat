@@ -1,10 +1,10 @@
 blueprint:
-  name: External Thermostat Control v1.0
+  name: External Thermostat Control v1.0.1
   source_url: https://raw.githubusercontent.com/jcspenle/HA_SensorPilotWire/main/blueprints/automation/jcspenle/external_thermostat_control.yaml
   description: >
     Thermostat virtuel utilisant une sonde de température externe pour contrôler un chauffage fil pilote.
-    - Compatible Z-Wave (climate) et NodOn (select fil pilote)
-    - Hystérésis configurable
+    - Compatible Climate Entity (Zigbee/Z-Wave) et Select Fil Pilote (NodOn)
+    - Hystérésis configurable (recommandé 0.5°C pour radiateurs fonte)
     - Consigne de température ajustable
     - Intégration avec blueprint fenêtres/portes
     - Activation/désactivation manuelle
@@ -37,7 +37,7 @@ blueprint:
 
     hysteresis:
       name: Hystérésis
-      description: Écart de température pour éviter les cycles rapides (ex 0.5°C)
+      description: Écart de température pour éviter les cycles rapides (0.5°C recommandé pour radiateurs fonte)
       selector:
         number:
           min: 0.1
@@ -49,23 +49,23 @@ blueprint:
     # === MODULE DE CHAUFFAGE ===
     module_type:
       name: Type de module chauffage
-      description: "Z-Wave: utilise climate entity | NodOn: utilise select fil pilote entity"
+      description: "Climate: entité climate (Zigbee/Z-Wave/WiFi) | Select: entité select fil pilote (NodOn)"
       selector:
         select:
-          options: ["Z-Wave", "NodOn"]
-      default: "NodOn"
+          options: ["Climate", "Select"]
+      default: "Select"
 
     heating_entity_climate:
-      name: Entité de chauffage (Z-Wave)
-      description: "Sélectionner l'entité climate pour les modules Z-Wave"
+      name: Entité de chauffage (Climate)
+      description: "Sélectionner l'entité climate si type Climate"
       selector:
         entity:
           domain: climate
       default: ""
 
     heating_entity_select:
-      name: Entité de chauffage (NodOn)
-      description: "Sélectionner l'entité select fil pilote pour les modules NodOn"
+      name: Entité de chauffage (Select Fil Pilote)
+      description: "Sélectionner l'entité select fil pilote si type Select (NodOn)"
       selector:
         entity:
           domain: select
@@ -143,7 +143,7 @@ variables:
   heating_entity_climate: !input heating_entity_climate
   heating_entity_select: !input heating_entity_select
   heating_entity: >
-    {{ heating_entity_climate if module_type == 'Z-Wave' else heating_entity_select }}
+    {{ heating_entity_climate if module_type == 'Climate' else heating_entity_select }}
   heating_mode: !input heating_mode
   windows: !input window_sensors
   doors: !input door_sensors
@@ -167,13 +167,13 @@ variables:
   
   # Mode actuel du chauffage
   current_mode: >
-    {% if module_type == 'NodOn' %}
+    {% if module_type == 'Select' %}
       {{ states(heating_entity) }}
     {% else %}
       {{ state_attr(heating_entity, 'preset_mode') }}
     {% endif %}
   
-  # Mapper les modes pour NodOn
+  # Mapper les modes pour NodOn (Select)
   heating_mode_mapped: >
     {% set mode = heating_mode %}
     {{ 'comfort_-1' if mode == 'comfort-1' else 
@@ -219,10 +219,10 @@ action:
         sequence:
           # Si mode actif, couper le chauffage
           - choose:
-              # MODULE NODON
+              # MODULE SELECT (NodOn)
               - conditions:
                   - condition: template
-                    value_template: "{{ module_type == 'NodOn' }}"
+                    value_template: "{{ module_type == 'Select' }}"
                   - condition: template
                     value_template: "{{ current_mode not in ['off', 'none'] }}"
                 sequence:
@@ -232,10 +232,10 @@ action:
                     data:
                       option: "off"
               
-              # MODULE Z-WAVE
+              # MODULE CLIMATE
               - conditions:
                   - condition: template
-                    value_template: "{{ module_type == 'Z-Wave' }}"
+                    value_template: "{{ module_type == 'Climate' }}"
                   - condition: template
                     value_template: "{{ current_mode not in ['off', 'none'] }}"
                 sequence:
@@ -263,10 +263,10 @@ action:
         sequence:
           # Couper le chauffage
           - choose:
-              # MODULE NODON
+              # MODULE SELECT (NodOn)
               - conditions:
                   - condition: template
-                    value_template: "{{ module_type == 'NodOn' }}"
+                    value_template: "{{ module_type == 'Select' }}"
                   - condition: template
                     value_template: "{{ current_mode not in ['off', 'none'] }}"
                 sequence:
@@ -276,10 +276,10 @@ action:
                     data:
                       option: "off"
               
-              # MODULE Z-WAVE
+              # MODULE CLIMATE
               - conditions:
                   - condition: template
-                    value_template: "{{ module_type == 'Z-Wave' }}"
+                    value_template: "{{ module_type == 'Climate' }}"
                   - condition: template
                     value_template: "{{ current_mode not in ['off', 'none'] }}"
                 sequence:
@@ -313,10 +313,10 @@ action:
                 sequence:
                   # Activer le chauffage
                   - choose:
-                      # MODULE NODON
+                      # MODULE SELECT (NodOn)
                       - conditions:
                           - condition: template
-                            value_template: "{{ module_type == 'NodOn' }}"
+                            value_template: "{{ module_type == 'Select' }}"
                           - condition: template
                             value_template: "{{ current_mode != heating_mode_mapped }}"
                         sequence:
@@ -338,10 +338,10 @@ action:
                                   value: >
                                     {{ now().strftime('%H:%M') }} - {{ room }}: 🔥 Chauffage ON ({{ current_temp }}°C < {{ target_temp }}°C)
                       
-                      # MODULE Z-WAVE
+                      # MODULE CLIMATE
                       - conditions:
                           - condition: template
-                            value_template: "{{ module_type == 'Z-Wave' }}"
+                            value_template: "{{ module_type == 'Climate' }}"
                           - condition: template
                             value_template: "{{ current_mode != heating_mode }}"
                         sequence:
@@ -373,10 +373,10 @@ action:
                 sequence:
                   # Couper le chauffage
                   - choose:
-                      # MODULE NODON
+                      # MODULE SELECT (NodOn)
                       - conditions:
                           - condition: template
-                            value_template: "{{ module_type == 'NodOn' }}"
+                            value_template: "{{ module_type == 'Select' }}"
                           - condition: template
                             value_template: "{{ current_mode not in ['off', 'none'] }}"
                         sequence:
@@ -398,10 +398,10 @@ action:
                                   value: >
                                     {{ now().strftime('%H:%M') }} - {{ room }}: ❄️ Chauffage OFF ({{ current_temp }}°C > {{ target_temp }}°C)
                       
-                      # MODULE Z-WAVE
+                      # MODULE CLIMATE
                       - conditions:
                           - condition: template
-                            value_template: "{{ module_type == 'Z-Wave' }}"
+                            value_template: "{{ module_type == 'Climate' }}"
                           - condition: template
                             value_template: "{{ current_mode not in ['off', 'none'] }}"
                         sequence:
@@ -423,3 +423,4 @@ action:
 
 mode: queued
 max: 10
+```
