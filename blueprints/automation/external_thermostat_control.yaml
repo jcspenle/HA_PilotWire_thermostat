@@ -1,36 +1,34 @@
 blueprint:
-  name: External Thermostat Control v1.1
-  source_url: https://raw.githubusercontent.com/jcspenle/HA_SensorPilotWire/main/blueprints/automation/jcspenle/external_thermostat_control_light.yaml
+  name: External Thermostat Control v1.2 (Integrated Safety)
+  source_url: https://raw.githubusercontent.com/jcspenle/HA_SensorPilotWire/main/blueprints/automation/jcspenle/external_thermostat_control_v1.2.yaml
   description: >
-    Thermostat virtuel utilisant une sonde de température externe pour contrôler un chauffage fil pilote.
+    Thermostat virtuel avec SÉCURITÉ INTÉGRÉE contre les ouvertures.
     
-    **Version Light** : Gère UNIQUEMENT la régulation de température.
-    Compatible avec le blueprint fenêtres/portes (séparation des responsabilités).
+    **Fonctionnement automatique en arrière-plan** :
+    - Vérifie TOUJOURS l'état des fenêtres/portes avant d'allumer
+    - IMPOSSIBLE d'allumer si un ouvrant est ouvert
+    - Compatible avec le blueprint fenêtres/portes pour double sécurité
+    - Hystérésis 0.5°C (optimal pour radiateurs fonte)
     
-    Fonctionnalités :
-    - Compatible Climate Entity (Zigbee/Z-Wave) et Select Fil Pilote (NodOn)
-    - Hystérésis configurable (0.5°C recommandé pour radiateurs fonte)
-    - Consigne de température ajustable via input_number
-    - Activation/désactivation manuelle via input_boolean
-    - Mode de chauffage configurable (comfort, eco, etc.)
-    - Logs optionnels pour le suivi
+    **Architecture fail-safe** :
+    - Blueprint fenêtres : Coupure immédiate à l'ouverture
+    - Blueprint thermostat : Vérification avant chaque allumage
+    - Résultat : Priorité ABSOLUE aux ouvertures
     
-    Note : Les fenêtres/portes doivent être gérées par le blueprint séparé "Heating Control - Window/Door Open Detection"
-    pour éviter les conflits et assurer une architecture claire.
   domain: automation
 
   input:
     # === CONFIGURATION PRINCIPALE ===
     thermostat_active:
       name: Activation du thermostat
-      description: Input boolean pour activer/désactiver le thermostat. Quand désactivé, le chauffage est forcé à OFF.
+      description: Input boolean pour activer/désactiver le thermostat manuellement
       selector:
         entity:
           domain: input_boolean
 
     temperature_sensor:
       name: Capteur de température
-      description: Sonde de température externe à utiliser pour la régulation (différente de celle du chauffage)
+      description: Sonde de température externe pour la régulation
       selector:
         entity:
           domain: sensor
@@ -38,14 +36,14 @@ blueprint:
 
     temperature_setpoint:
       name: Consigne de température
-      description: Input number contenant la température cible souhaitée
+      description: Input number avec la température cible
       selector:
         entity:
           domain: input_number
 
     hysteresis:
       name: Hystérésis
-      description: Écart de température pour éviter les cycles rapides ON/OFF. Recommandation 0.5°C pour radiateurs fonte (bonne inertie).
+      description: Écart de température pour éviter les cycles rapides (0.5°C recommandé pour fonte)
       selector:
         number:
           min: 0.1
@@ -57,7 +55,7 @@ blueprint:
     # === MODULE DE CHAUFFAGE ===
     module_type:
       name: Type de module chauffage
-      description: "Climate: entité climate (Zigbee/Z-Wave/WiFi) | Select: entité select fil pilote (NodOn)"
+      description: "Climate: entité climate | Select: entité select fil pilote (NodOn)"
       selector:
         select:
           options: ["Climate", "Select"]
@@ -65,7 +63,7 @@ blueprint:
 
     heating_entity_climate:
       name: Entité de chauffage (Climate)
-      description: "Sélectionner l'entité climate si type Climate (laisser vide si type Select)"
+      description: "Laisser vide si type Select"
       selector:
         entity:
           domain: climate
@@ -73,7 +71,7 @@ blueprint:
 
     heating_entity_select:
       name: Entité de chauffage (Select Fil Pilote)
-      description: "Sélectionner l'entité select fil pilote si type Select/NodOn (laisser vide si type Climate)"
+      description: "Laisser vide si type Climate"
       selector:
         entity:
           domain: select
@@ -81,23 +79,52 @@ blueprint:
 
     heating_mode:
       name: Mode de chauffage actif
-      description: Mode à utiliser quand le chauffage doit être actif (température trop basse)
+      description: Mode à utiliser pour chauffer
       selector:
         select:
           options: ["comfort","comfort-1","comfort-2","eco"]
       default: "comfort"
 
-    # === NOTIFICATIONS & LOGS ===
+    # === SÉCURITÉ FENÊTRES/PORTES ===
+    window_sensors:
+      name: Capteurs de fenêtres (optionnel mais recommandé)
+      description: Le thermostat ne pourra JAMAIS allumer si fenêtre ouverte
+      selector:
+        entity:
+          domain: binary_sensor
+          device_class: window
+          multiple: true
+      default: []
+
+    door_sensors:
+      name: Capteurs de portes (optionnel)
+      description: Le thermostat ne pourra JAMAIS allumer si porte ouverte
+      selector:
+        entity:
+          domain: binary_sensor
+          device_class: door
+          multiple: true
+      default: []
+
+    sensor_logic:
+      name: Logique des capteurs
+      description: "Normal: on=ouvert, off=fermé | Inverse: on=fermé, off=ouvert"
+      selector:
+        select:
+          options: ["Normal","Inverse"]
+      default: "Normal"
+
+    # === LOGS ===
     room_name:
       name: Nom de la pièce
-      description: Nom de la pièce pour l'identification dans les logs
+      description: Pour identification dans les logs
       selector:
         text: {}
       default: "Pièce"
 
     log_entity:
       name: Entité de log (optionnel)
-      description: Input_text pour logger l'activité du thermostat. Laisser vide pour désactiver les logs.
+      description: Input_text pour logs
       selector:
         entity:
           domain: input_text
@@ -115,8 +142,24 @@ variables:
   heating_entity: >
     {{ heating_entity_climate if module_type == 'Climate' else heating_entity_select }}
   heating_mode: !input heating_mode
+  windows: !input window_sensors
+  doors: !input door_sensors
+  logic: !input sensor_logic
   room: !input room_name
   log_ent: !input log_entity
+  
+  # État des capteurs d'ouverture
+  state_open: >
+    {{ 'off' if logic == 'Inverse' else 'on' }}
+  
+  # VÉRIFICATION CRITIQUE : Y a-t-il un ouvrant ouvert ?
+  any_open: >
+    {% set all_sensors = (windows | default([])) + (doors | default([])) %}
+    {% if all_sensors | length == 0 %}
+      false
+    {% else %}
+      {{ expand(all_sensors) | selectattr('state','eq', state_open) | list | length > 0 }}
+    {% endif %}
   
   # Température actuelle et consigne
   current_temp: >
@@ -132,7 +175,7 @@ variables:
       {{ state_attr(heating_entity, 'preset_mode') }}
     {% endif %}
   
-  # Mapper les modes pour NodOn (comfort-1 → comfort_-1)
+  # Mapper les modes pour NodOn
   heating_mode_mapped: >
     {% set mode = heating_mode %}
     {{ 'comfort_-1' if mode == 'comfort-1' else 
@@ -140,22 +183,33 @@ variables:
 
 # ===== TRIGGERS =====
 trigger:
-  # Changement de température
   - platform: state
     entity_id: !input temperature_sensor
     id: temp_change
   
-  # Changement de consigne
   - platform: state
     entity_id: !input temperature_setpoint
     id: setpoint_change
   
-  # Activation/désactivation manuelle
   - platform: state
     entity_id: !input thermostat_active
     id: active_change
+  
+  # Trigger sur ouverture fenêtre/porte
+  - platform: state
+    entity_id: !input window_sensors
+    to: 
+      - "on"
+      - "off"
+    id: window_change
+  
+  - platform: state
+    entity_id: !input door_sensors
+    to:
+      - "on"
+      - "off"
+    id: door_change
 
-# ===== CONDITIONS =====
 condition: []
 
 # ===== ACTIONS =====
@@ -166,9 +220,7 @@ action:
           - condition: template
             value_template: "{{ is_state(active, 'off') }}"
         sequence:
-          # Si le chauffage est actuellement actif, le couper
           - choose:
-              # MODULE SELECT (NodOn)
               - conditions:
                   - condition: template
                     value_template: "{{ module_type == 'Select' }}"
@@ -181,7 +233,6 @@ action:
                     data:
                       option: "off"
               
-              # MODULE CLIMATE
               - conditions:
                   - condition: template
                     value_template: "{{ module_type == 'Climate' }}"
@@ -192,7 +243,6 @@ action:
                     target:
                       entity_id: "{{ heating_entity }}"
           
-          # Log de désactivation
           - if:
               - condition: template
                 value_template: "{{ log_ent != '' }}"
@@ -203,10 +253,63 @@ action:
                 data:
                   value: "{{ now().strftime('%H:%M') }} - {{ room }}: ⏸️ Thermostat DÉSACTIVÉ"
 
-      # === RÉGULATION NORMALE (Thermostat actif) ===
+      # === OUVRANT OUVERT → SÉCURITÉ ===
       - conditions:
           - condition: template
             value_template: "{{ is_state(active, 'on') }}"
+          - condition: template
+            value_template: "{{ any_open }}"
+        sequence:
+          # Couper le chauffage si actuellement allumé
+          - choose:
+              - conditions:
+                  - condition: template
+                    value_template: "{{ module_type == 'Select' }}"
+                  - condition: template
+                    value_template: "{{ current_mode not in ['off', 'none'] }}"
+                sequence:
+                  - service: select.select_option
+                    target:
+                      entity_id: "{{ heating_entity }}"
+                    data:
+                      option: "off"
+                  
+                  - if:
+                      - condition: template
+                        value_template: "{{ log_ent != '' }}"
+                    then:
+                      - service: input_text.set_value
+                        target:
+                          entity_id: "{{ log_ent }}"
+                        data:
+                          value: "{{ now().strftime('%H:%M') }} - {{ room }}: 🚨 SÉCURITÉ - Ouvrant ouvert, chauffage OFF"
+              
+              - conditions:
+                  - condition: template
+                    value_template: "{{ module_type == 'Climate' }}"
+                  - condition: template
+                    value_template: "{{ current_mode not in ['off', 'none'] }}"
+                sequence:
+                  - service: climate.turn_off
+                    target:
+                      entity_id: "{{ heating_entity }}"
+                  
+                  - if:
+                      - condition: template
+                        value_template: "{{ log_ent != '' }}"
+                    then:
+                      - service: input_text.set_value
+                        target:
+                          entity_id: "{{ log_ent }}"
+                        data:
+                          value: "{{ now().strftime('%H:%M') }} - {{ room }}: 🚨 SÉCURITÉ - Ouvrant ouvert, chauffage OFF"
+
+      # === RÉGULATION NORMALE (Thermostat actif ET tout fermé) ===
+      - conditions:
+          - condition: template
+            value_template: "{{ is_state(active, 'on') }}"
+          - condition: template
+            value_template: "{{ not any_open }}"
         sequence:
           - choose:
               # === TEMPÉRATURE TROP BASSE → CHAUFFER ===
@@ -214,7 +317,10 @@ action:
                   - condition: template
                     value_template: "{{ current_temp < (target_temp - hyst) }}"
                 sequence:
-                  # Activer le chauffage selon le type de module
+                  # ⚠️ VÉRIFICATION FINALE DE SÉCURITÉ AVANT ALLUMAGE
+                  - condition: template
+                    value_template: "{{ not any_open }}"
+                  
                   - choose:
                       # MODULE SELECT (NodOn)
                       - conditions:
@@ -229,7 +335,6 @@ action:
                             data:
                               option: "{{ heating_mode_mapped }}"
                           
-                          # Log activation
                           - if:
                               - condition: template
                                 value_template: "{{ log_ent != '' }}"
@@ -257,7 +362,6 @@ action:
                             data:
                               preset_mode: "{{ heating_mode }}"
                           
-                          # Log activation
                           - if:
                               - condition: template
                                 value_template: "{{ log_ent != '' }}"
@@ -274,9 +378,7 @@ action:
                   - condition: template
                     value_template: "{{ current_temp > (target_temp + hyst) }}"
                 sequence:
-                  # Couper le chauffage selon le type de module
                   - choose:
-                      # MODULE SELECT (NodOn)
                       - conditions:
                           - condition: template
                             value_template: "{{ module_type == 'Select' }}"
@@ -289,7 +391,6 @@ action:
                             data:
                               option: "off"
                           
-                          # Log désactivation
                           - if:
                               - condition: template
                                 value_template: "{{ log_ent != '' }}"
@@ -301,7 +402,6 @@ action:
                                   value: >
                                     {{ now().strftime('%H:%M') }} - {{ room }}: ❄️ Chauffage OFF ({{ current_temp | round(1) }}°C > {{ (target_temp + hyst) | round(1) }}°C)
                       
-                      # MODULE CLIMATE
                       - conditions:
                           - condition: template
                             value_template: "{{ module_type == 'Climate' }}"
@@ -312,7 +412,6 @@ action:
                             target:
                               entity_id: "{{ heating_entity }}"
                           
-                          # Log désactivation
                           - if:
                               - condition: template
                                 value_template: "{{ log_ent != '' }}"
@@ -323,9 +422,6 @@ action:
                                 data:
                                   value: >
                                     {{ now().strftime('%H:%M') }} - {{ room }}: ❄️ Chauffage OFF ({{ current_temp | round(1) }}°C > {{ (target_temp + hyst) | round(1) }}°C)
-
-              # === ZONE MORTE (entre target-hyst et target+hyst) ===
-              # Pas d'action, on laisse le chauffage dans son état actuel pour éviter les cycles rapides
 
 mode: queued
 max: 10
