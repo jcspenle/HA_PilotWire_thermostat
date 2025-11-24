@@ -1,5 +1,5 @@
 blueprint:
-  name: External Thermostat Control v1.2 (Integrated Safety)
+  name: External Thermostat Control v1.2.1 (Integrated Safety)
   source_url: https://raw.githubusercontent.com/jcspenle/HA_SensorPilotWire/main/blueprints/automation/jcspenle/external_thermostat_control_v1.2.yaml
   description: >
     Thermostat virtuel avec SÉCURITÉ INTÉGRÉE contre les ouvertures.
@@ -376,7 +376,7 @@ action:
               # === TEMPÉRATURE TROP HAUTE → COUPER ===
               - conditions:
                   - condition: template
-                    value_template: "{{ current_temp > (target_temp + hyst) }}"
+                    value_template: "{{ current_temp > (target_temp + 0.2) }}"
                 sequence:
                   - choose:
                       - conditions:
