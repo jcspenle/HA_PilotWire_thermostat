@@ -400,7 +400,7 @@ action:
                                   entity_id: "{{ log_ent }}"
                                 data:
                                   value: >
-                                    {{ now().strftime('%H:%M') }} - {{ room }}: ❄️ Chauffage OFF ({{ current_temp | round(1) }}°C > {{ (target_temp + hyst) | round(1) }}°C)
+                                    {{ now().strftime('%H:%M') }} - {{ room }}: ❄️ Chauffage OFF ({{ current_temp | round(1) }}°C > {{ (target_temp + 0.2) | round(1) }}°C)
                       
                       - conditions:
                           - condition: template
